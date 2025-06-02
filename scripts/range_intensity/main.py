@@ -90,12 +90,12 @@ def main():
         background_points,
         bg_rings,
         nb_points=5,
-        radius=0.8
+        radius=0.7
     )
 
     # 5. Cluster foreground points and compute oriented bounding boxes
     print("Clustering and computing oriented bounding boxes...")
-    cluster_bboxes = cluster_and_get_oriented_bboxes(foreground_points, eps=0.8, min_points=3)
+    cluster_bboxes = cluster_and_get_oriented_bboxes(foreground_points, eps=2.5, min_points=5)
     '''
     # 6. Interactive visualization
     print("Launching interactive visualization...")
@@ -115,7 +115,7 @@ def main():
         beam_altitude_angles,
         cluster_bboxes=cluster_bboxes,
     )
-    
+
     # To visualize static bounding boxes only:
     visualize_bboxes_static_foreground(foreground_points, cluster_bboxes)
     '''

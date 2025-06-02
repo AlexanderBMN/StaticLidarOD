@@ -252,68 +252,110 @@ def visualize_bboxes_static_foreground(foreground_points: np.ndarray, cluster_bb
 
 def project_bboxes_to_image(camera, bboxes, line_color=(0, 255, 0), line_width=2):
     """
-    Projects each 3D bounding box onto the 2D image plane of the given camera
-    and draws the box edges onto the image using PIL.
+    Projiziert und zeichnet nur die 3D-Bounding-Boxes, die tatsächlich teilweise im Bild liegen.
+    Sortiert dabei die 8 Eckpunkte so, dass 0–3 = untere Ebene (z_min), 4–7 = obere Ebene (z_max),
+    und verbindet sie in der Standard-Reihenfolge.
 
     Args:
-        camera: The camera object (e.g., test_frame.tower.cameras.VIEW_1), with:
-            - camera.info.camera_mtx     (3×3 numpy array)
-            - camera.info.distortion_mtx (ignored here)
-            - get_transformation(camera.info) returns an object whose
-              .invert_transformation() has .rotation (3×3) and .translation (3,)
-            - camera.image.image: PIL.Image
-        bboxes (list[open3d.geometry.OrientedBoundingBox]):
-            List of OBBs in the LIDAR coordinate frame.
-        line_color (tuple[int,int,int]): RGB color for box edges (default: green).
-        line_width (int): Thickness of the lines to draw.
+        camera: test_frame.tower.cameras.VIEW_1 (mit .info und .image.image)
+            • .info.camera_mtx     = 3×3 Intrinsik
+            • .image.image         = PIL.Image
+            • get_transformation(info).invert_transformation().mtx liefert 4×4 LIDAR→Camera.
+        bboxes: Liste von open3d.geometry.OrientedBoundingBox (im LIDAR-Koordinatenrahmen).
+        line_color: RGB‐Triple für die Linien (default grün).
+        line_width: Liniendicke (default 2px).
 
     Returns:
-        PIL.Image: The image with projected boxes drawn.
+        PIL.Image: Das Bild, in das nur die tatsächlich sichtbaren Boxkanten eingezeichnet wurden.
     """
     info = camera.info
-    # Intrinsic camera matrix
     cam_mtx = info.camera_mtx.copy()
-    # Build extrinsics: LIDAR → camera
-    cam_to_lidar = get_transformation(info)
-    lidar_to_cam = cam_to_lidar.invert_transformation()
-    R = np.array(lidar_to_cam.rotation)  # 3×3
-    t = np.array(lidar_to_cam.translation)  # (3,)
 
-    # Get PIL image
+    # Extrinsik (LIDAR→Kamera)
+    lidar_to_cam_tf = get_transformation(info).invert_transformation()
+    T = lidar_to_cam_tf.mtx
+    R_mat = T[:3, :3].copy()
+    t_vec = T[:3, 3].copy()
+
+    # PIL-Bild zum Zeichnen vorbereiten
     img_pil = camera.image.image.convert("RGB")
     draw = ImageDraw.Draw(img_pil)
-    w, h = img_pil.size
+    width, height = img_pil.size
 
-    for obb in bboxes:
-        # 8 corners in LIDAR frame
-        corners = np.asarray(obb.get_box_points())  # shape (8, 3)
+    for idx, obb in enumerate(bboxes):
+        # 1) Lade die 8 Eckpunkte (LIDAR-Rahmen)
+        corners = np.asarray(obb.get_box_points())  # shape (8,3)
 
-        # Transform to camera frame: X_cam = R @ X_lidar + t
-        corners_cam = (R @ corners.T + t.reshape(3, 1)).T  # (8, 3)
+        # 2) Untere vs. obere Ebene nach z‐Werten trennen
+        z_vals = corners[:, 2]
+        z_min = z_vals.min()
+        z_max = z_vals.max()
 
-        # Skip box if all corners are behind camera
-        if np.all(corners_cam[:, 2] <= 1e-3):
+        idx_bottom = np.where(np.isclose(z_vals, z_min, atol=1e-6))[0]
+        idx_top = np.where(np.isclose(z_vals, z_max, atol=1e-6))[0]
+
+        # Falls weniger bzw. mehr als 4 Punkte je Ebene, skip
+        if len(idx_bottom) != 4 or len(idx_top) != 4:
             continue
 
-        # Project to 2D: u = fx * X/Z + cx, v = fy * Y/Z + cy
-        pts_2d_homo = (cam_mtx @ (corners_cam.T / corners_cam[:, 2])).T  # (8, 3)
-        pts_2d = pts_2d_homo[:, :2]  # discard scale
+        # Hilfsfunktion: Sortiere vier Eckpunkte "gegen den Uhrzeigersinn" in xy-Ebene
+        def sort_ccw(index_list):
+            pts_xy = corners[index_list, :2]  # (4,2)
+            center_xy = pts_xy.mean(axis=0)  # (2,)
+            angles = np.arctan2(pts_xy[:, 1] - center_xy[1],
+                                pts_xy[:, 0] - center_xy[0])
+            sorted_idx_inner = np.argsort(angles)  # 4‐Elemente‐Permutation
+            return index_list[sorted_idx_inner]  # (4,)
 
-        # Round to integer pixel coordinates
-        pts_2d_int = np.round(pts_2d).astype(int)
+        sorted_bottom = sort_ccw(idx_bottom)  # Reihenfolge der unteren 4 Ecken
+        sorted_top = sort_ccw(idx_top)  # Reihenfolge der oberen 4 Ecken
 
-        # Define the 12 edges (corner indices)
+        # 3) Erstelle nun eine durchgehende Reihenfolge [b0,b1,b2,b3, t0,t1,t2,t3]
+        ordered_indices = np.hstack((sorted_bottom, sorted_top))  # (8,)
+
+        # 4) Extrahiere in dieser Reihenfolge die Ecken
+        corners_ordered = corners[ordered_indices]  # (8,3)
+
+        # 5) Transformation in Kamera‐Koordinaten
+        corners_cam = (R_mat @ corners_ordered.T).T + t_vec  # (8,3)
+
+        # 6) Prüfen, ob überhaupt eine Ecke vor der Kamera liegt
+        z_cam_vals = corners_cam[:, 2]
+        if np.all(z_cam_vals <= 1e-6):
+            # Alle Ecken hinter Kamera → skip
+            continue
+
+        # 7) Projiziere in Bildkoordinaten
+        Z = z_cam_vals.reshape(-1, 1)  # (8,1)
+        pts_norm = corners_cam[:, :2] / Z  # (8,2)
+        hom = np.hstack((pts_norm, np.ones((8, 1))))  # (8,3)
+        uv = (cam_mtx @ hom.T).T  # (8,3)
+        uv2d = uv[:, :2]  # (8,2) floats
+        uv_int = np.round(uv2d).astype(int)  # (8,2) ints
+
+        # 8) Prüfen, ob mindestens ein Eckpunkt in den Bildbereich fällt
+        in_frame = [
+            (0 <= uv_int[i, 0] < width) and (0 <= uv_int[i, 1] < height) and (z_cam_vals[i] > 1e-6)
+            for i in range(8)
+        ]
+        if not any(in_frame):
+            # Keine Ecke sichtbar → skip
+            continue
+
+        # 10) Kantenpaare (nun, da 0–3 unten, 4–7 oben, stimmen diese Paare)
         edges = [
-            (0, 1), (1, 2), (2, 3), (3, 0),  # bottom face
-            (4, 5), (5, 6), (6, 7), (7, 4),  # top face
-            (0, 4), (1, 5), (2, 6), (3, 7)  # vertical edges
+            (0, 1), (1, 2), (2, 3), (3, 0),  # untere Fläche
+            (4, 5), (5, 6), (6, 7), (7, 4),  # obere Fläche
+            (0, 4), (1, 5), (2, 6), (3, 7)  # vertikale Kanten
         ]
 
-        for i, j in edges:
-            x1, y1 = pts_2d_int[i]
-            x2, y2 = pts_2d_int[j]
-            # Only draw if both endpoints are within image bounds
-            if 0 <= x1 < w and 0 <= y1 < h and 0 <= x2 < w and 0 <= y2 < h:
-                draw.line([(x1, y1), (x2, y2)], fill=line_color, width=line_width)
+        # 11) Zeichne jede Kante nur, falls beide Endpunkte im Bild liegen
+        for (i1, i2) in edges:
+            u1, v1 = uv_int[i1]
+            u2, v2 = uv_int[i2]
+            if (0 <= u1 < width and 0 <= v1 < height and
+                    0 <= u2 < width and 0 <= v2 < height and
+                    z_cam_vals[i1] > 1e-6 and z_cam_vals[i2] > 1e-6):
+                draw.line([(u1, v1), (u2, v2)], fill=line_color, width=line_width)
 
     return img_pil
