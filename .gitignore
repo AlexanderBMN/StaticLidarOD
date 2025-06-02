@@ -10,3 +10,4 @@ venv
 *.npy
 *.pkl
 .idea
+data/

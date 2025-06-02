@@ -1,0 +1,16 @@
+thresholding:
+  noise_ratio: 0.02
+  sparse_ratio_low: 0.02
+  sparse_ratio_high: 0.30
+  sparse_static_ratio: 0.50
+
+  coarse_top_n: 3
+  coarse_min_ratio: 0.20
+  coarse_trim_offset: 5.0
+
+  fine_top_n: 5
+  fine_min_ratio: 0.10
+  fine_bin_num: 200
+  fine_min_bin_size: 0.10
+
+  max_range: 200.0

@@ -1,0 +1,6 @@
+numpy
+open3d
+matplotlib
+coopscenes
+scipy
+pyyaml
