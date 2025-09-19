@@ -1,3 +1,10 @@
+data_format: CoopScenes #CoopScenes, A42
+data_path: C:\Users\abaum\Downloads\CoopScenes\seq_1\
+total_frames: 200
+
+load_background_model: true
+model_path: C:\Users\abaum\PycharmProjects\PythonProject\StaticLidarOD\data\background_model.npz
+
 thresholding:
   noise_ratio: 0.02
   sparse_ratio_low: 0.02

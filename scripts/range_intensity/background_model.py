@@ -7,36 +7,58 @@ and perform background/foreground separation on new frames.
 """
 
 import numpy as np
+import os
 from thresholding import compute_threshold
 import open3d as o3d
+from range_intensity import get_horizontal_idx, get_vertical_idx, SensorMeta
+from typing import Optional
 
 
-def train_background_model(range_matrix, vert_total_grids, horiz_total_grids):
+class BackgroundModel:
+    def __init__(self, meta: Optional[SensorMeta] = None, range_matrix: Optional[np.ndarray] = None,
+                 threshold_matrix: Optional[np.ndarray] = None) -> None:
+        self.meta: Optional[SensorMeta] = meta
+        self.range_matrix: Optional[np.ndarray] = range_matrix
+        self.threshold_matrix: Optional[np.ndarray] = threshold_matrix
+
+    def save(self, path: str) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        np.savez_compressed(
+            path,
+            meta=self.meta.to_dict() if self.meta else {},
+            range_matrix=self.range_matrix,
+            threshold_matrix=self.threshold_matrix,
+        )
+
+    def load(self, path: str) -> None:
+        data = np.load(path, allow_pickle=True)
+        self.meta = SensorMeta.from_dict(data["meta"].item())
+        self.range_matrix = data["range_matrix"]
+        self.threshold_matrix = data["threshold_matrix"]
+
+
+def train_background_model(range_matrix, sensor_meta):
     """
     Learn a static background threshold for each beam direction.
 
     Args:
         range_matrix (np.ndarray): 3D array (vert × horiz × frames) of distances.
-        vert_total_grids (int): Number of vertical grid cells.
-        horiz_total_grids (int): Number of horizontal grid cells.
 
     Returns:
         np.ndarray: 2D array (vert × horiz) of computed thresholds.
     """
-    range_thrld_matrix = np.ones((vert_total_grids, horiz_total_grids), dtype=np.float32) * 200
-    for i in range(vert_total_grids):
-        for j in range(horiz_total_grids):
+    range_thrld_matrix = np.ones((sensor_meta.vert_total_grids, sensor_meta.horiz_total_grids), dtype=np.float32) * 200
+    for i in range(sensor_meta.vert_total_grids):
+        for j in range(sensor_meta.horiz_total_grids):
             distances = range_matrix[i, j, :]
             range_thrld_matrix[i, j] = compute_threshold(distances)
         if i % 10 == 0:
-            print(f"Background training: processed row {i}/{vert_total_grids}.")
+            print(f"Background training: processed row {i}/{sensor_meta.vert_total_grids}.")
     print("Background training completed.")
     return range_thrld_matrix
 
 
-def background_subtraction(test_frame, range_thrld_matrix, FOV_vert, FOV_horiz,
-                           azimuth_resltn, elevation_resltn, horiz_total_grids,
-                           vert_total_grids, beam_altitude_angles=None):
+def background_subtraction(test_frame, bg_model: BackgroundModel):
     """
     Separate foreground and background points in a test frame using thresholds.
 
@@ -68,9 +90,6 @@ def background_subtraction(test_frame, range_thrld_matrix, FOV_vert, FOV_horiz,
 
     x_test, y_test, z_test = points[:, 0], points[:, 1], points[:, 2]
     r_test = np.sqrt(x_test ** 2 + y_test ** 2 + z_test ** 2)
-
-    # Determine indices (reuse dataloader logic)
-    from dataloader import get_horizontal_idx, get_vertical_idx
 
     horizontal_idx = get_horizontal_idx(x_test, y_test, FOV_horiz, azimuth_resltn, horiz_total_grids)
     if rings is None:

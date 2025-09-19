@@ -34,7 +34,7 @@ def load_config(path="config.yaml"):
 
 
 # Load thresholding parameters from the "thresholding" section of config.yaml
-_cfg = load_config("config.yaml")["thresholding"]
+_cfg = load_config("../../config/config.yaml")["thresholding"]
 
 NOISE_RATIO = _cfg.get("noise_ratio", 0.02)
 SPARSE_RATIO_LOW = _cfg.get("sparse_ratio_low", 0.02)

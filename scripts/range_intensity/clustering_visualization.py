@@ -204,7 +204,7 @@ def visualize_point_clouds_interactive(foreground_points: np.ndarray, background
         print("No points selected.")
         return
 
-    from dataloader import get_horizontal_idx, get_vertical_idx
+    from range_matrix import get_horizontal_idx, get_vertical_idx
 
     for idx in picked_indices:
         x, y, z = combined_points[idx]
