@@ -1,6 +1,6 @@
 data_format: CoopScenes #CoopScenes, A42
 data_path: C:\Users\abaum\Downloads\CoopScenes\seq_1\
-total_frames: 200
+total_frames: 4000
 
 load_background_model: true
 model_path: C:\Users\abaum\PycharmProjects\PythonProject\StaticLidarOD\data\background_model.npz
@@ -21,3 +21,11 @@ thresholding:
   fine_min_bin_size: 0.10
 
   max_range: 200.0
+
+post-processing:
+  outlier:
+    neighbor_points: 5
+    radius: 0.7
+  clustering:
+    epsilon: 2.5
+    min_points: 5

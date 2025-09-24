@@ -28,6 +28,10 @@ class ConfigManager:
 
         self.thresholding: Dict[str, Any] = self._cfg.get("thresholding", {})
 
+        self._post_processing: Dict[str, Any] = self._cfg.get("post-processing", {})
+        self.outlier: Dict[str, Any] = self._post_processing.get("outlier", {})
+        self.clustering: Dict[str, Any] = self._post_processing.get("clustering", {})
+
         log.debug("Loaded config from %s", cfg_file)
 
     def create_dataset(self):

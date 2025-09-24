@@ -11,7 +11,7 @@ import open3d as o3d
 from PIL import ImageDraw
 import matplotlib.pyplot as plt
 from scipy.spatial import ConvexHull
-from thresholding import compute_threshold_meta
+from range_intensity.core import compute_threshold_meta, points_to_indices
 
 from coopscenes import get_transformation
 
@@ -78,13 +78,13 @@ def compute_oriented_bbox_for_cluster(cluster_points: np.ndarray):
     return obb
 
 
-def cluster_and_get_oriented_bboxes(foreground_points: np.ndarray, eps: float = 0.8, min_points: int = 3):
+def cluster_and_get_oriented_bboxes(foreground_points: np.ndarray, config):
     """
     Cluster foreground points with DBSCAN and compute oriented 3D bounding boxes.
     """
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(foreground_points)
-    labels = np.array(pcd.cluster_dbscan(eps=eps, min_points=min_points, print_progress=True))
+    labels = np.array(pcd.cluster_dbscan(eps=config["epsilon"], min_points=config["min_points"], print_progress=True))
     max_label = labels.max()
     print(f"DBSCAN: Found {max_label + 1} clusters (noise = -1).")
 
@@ -164,13 +164,14 @@ def visualize_cfta(distances: np.ndarray):
     plt.show()
 
 
-def visualize_point_clouds_interactive(foreground_points: np.ndarray, background_points: np.ndarray,
-                                       fg_rings, bg_rings,
-                                       FOV_horiz, FOV_vert, azimuth_resltn,
-                                       elevation_resltn, horiz_total_grids, vert_total_grids,
-                                       range_matrix, range_thrld_matrix,
-                                       beam_altitude_angles=None,
-                                       cluster_bboxes=None):
+def visualize_point_clouds_interactive(
+        foreground_points: np.ndarray,
+        background_points: np.ndarray,
+        fg_rings,
+        bg_rings,
+        bg_model,
+        cluster_bboxes=None,
+):
     """
     Interactive visualization of combined point cloud with cluster bounding boxes.
     Clicking a point triggers coarse & fine histogram plots for that beam.
@@ -204,33 +205,35 @@ def visualize_point_clouds_interactive(foreground_points: np.ndarray, background
         print("No points selected.")
         return
 
-    from range_matrix import get_horizontal_idx, get_vertical_idx
+    # --- Alle ausgewählten Punkte auf einmal ---
+    picked_points = combined_points[picked_indices]
+    x, y, z = picked_points[:, 0], picked_points[:, 1], picked_points[:, 2]
 
-    for idx in picked_indices:
-        x, y, z = combined_points[idx]
-        r_val = np.sqrt(x ** 2 + y ** 2 + z ** 2)
+    if fg_rings is not None and bg_rings is not None:
+        all_rings = np.concatenate((fg_rings, bg_rings))
+        picked_rings = all_rings[picked_indices]
+    else:
+        picked_rings = None
 
-        hor_idx = get_horizontal_idx(np.array([x]), np.array([y]), FOV_horiz,
-                                     azimuth_resltn, horiz_total_grids)[0]
-        if fg_rings is not None and bg_rings is not None:
-            all_rings = np.concatenate((fg_rings, bg_rings))
-            ver_idx = all_rings[idx]
-        else:
-            ver_idx = get_vertical_idx(np.array([z]), np.array([r_val]), FOV_vert,
-                                       elevation_resltn, vert_total_grids,
-                                       beam_altitude_angles)[0]
+    # Punkte → Indizes
+    r, hor_idx, ver_idx = points_to_indices(bg_model.dataset.meta, x, y, z, picked_rings)
 
-        thr_val = range_thrld_matrix[ver_idx, hor_idx]
+    # --- Ergebnisse pro ausgewähltem Punkt ausgeben ---
+    for i, idx in enumerate(picked_indices):
+        thr_val = bg_model.threshold_matrix[ver_idx[i], hor_idx[i]]
         group = "Foreground" if idx < fg_len else "Background"
-        print(f"Point {idx} ({group}): Range={r_val:.2f} m, hor_idx={hor_idx}, "
-              f"ver_idx={ver_idx}, Threshold={thr_val:.2f} m")
 
-        distances = range_matrix[ver_idx, hor_idx, :]
+        print(
+            f"Point {idx} ({group}): Range={r[i]:.2f} m, hor_idx={hor_idx[i]}, "
+            f"ver_idx={ver_idx[i]}, Threshold={thr_val:.2f} m"
+        )
 
-        print(f"Plotting coarse histogram for beam (ver={ver_idx}, hor={hor_idx})...")
+        distances = bg_model.range_matrix[ver_idx[i], hor_idx[i], :]
+
+        print(f"Plotting coarse histogram for beam (ver={ver_idx[i]}, hor={hor_idx[i]})...")
         visualize_coarse_histogram(distances)
 
-        print(f"Plotting CFTA fine histogram for beam (ver={ver_idx}, hor={hor_idx})...")
+        print(f"Plotting CFTA fine histogram for beam (ver={ver_idx[i]}, hor={hor_idx[i]})...")
         visualize_cfta(distances)
 
 

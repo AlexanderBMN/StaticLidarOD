@@ -1,4 +1,3 @@
-import bisect
 import numpy as np
 import importlib
 from typing import Optional, Tuple
@@ -6,7 +5,8 @@ from typing import Optional, Tuple
 coopscenes = importlib.import_module("coopscenes")
 Dataloader, Frame = coopscenes.Dataloader, coopscenes.Frame
 
-from range_intensity import SensorMeta
+from .sensor_meta import SensorMeta
+from range_intensity.core import points_to_indices, update_range_matrix
 
 
 class CoopScenes:
@@ -16,18 +16,10 @@ class CoopScenes:
         self.dataset_path = dataset_path
         self.dataset = Dataloader(dataset_path)
         self.meta = self._build_metadata()
-        self._num_frames_cumulative = self._compute_cumulative_frames()
-
-    def _compute_cumulative_frames(self) -> list[int]:
-        """Compute cumulative frame counts across all records."""
-        frame_counts = [record.num_frames for record in self.dataset]
-        cumulative_list = np.cumsum(frame_counts).tolist()
-
-        return cumulative_list
 
     def _build_metadata(self) -> SensorMeta:
         """Build SensorMeta from the first LiDAR frame in the dataset."""
-        frame = self.dataset[0][0]
+        frame = self.get_test_frame()
         info = frame.tower.lidars.UPPER_PLATFORM.info
 
         # FOV depending on sensor type
@@ -62,19 +54,22 @@ class CoopScenes:
             beam_altitude_angles=beam_angles,
         )
 
-    def __getitem__(self, frame_idx: int) -> Frame:
-        """Enable list-like access: cs[200] -> Frame with global index 200."""
-        return self.get_frame(frame_idx)
+    def get_range_matrix(self, range_matrix, total_frames):
+        frame_num = 0
+        for record in self.dataset:
+            for frame in record:
+                if frame_num >= total_frames:
+                    break
+                x, y, z, ring = self.get_points(frame)
+                r, hor_idx, ver_idx = points_to_indices(self.meta, x, y, z, ring)
+                update_range_matrix(range_matrix, r, hor_idx, ver_idx, frame_num)
 
-    def __len__(self) -> int:
-        """Total number of frames across all records."""
-        return self._num_frames_cumulative[-1]
-
-    def get_frame(self, frame_idx: int) -> Frame:
-        """Return the global frame by index across all records."""
-        record_idx = bisect.bisect_right(self._num_frames_cumulative, frame_idx)
-        local_idx = frame_idx if record_idx == 0 else frame_idx - self._num_frames_cumulative[record_idx - 1]
-        return self.dataset[record_idx][local_idx]
+                frame_num += 1
+                if frame_num % 100 == 0:
+                    print(f"Processed {frame_num} frames.")
+            if frame_num >= total_frames:
+                break
+        return range_matrix
 
     @staticmethod
     def get_points(frame: Frame) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
@@ -88,3 +83,6 @@ class CoopScenes:
             ring = None
 
         return x, y, z, ring
+
+    def get_test_frame(self):
+        return self.dataset[-1][-1]
